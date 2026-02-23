@@ -1,0 +1,6 @@
+@GridApi_HostAddress = http://localhost:5187
+
+GET {{GridApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -1,0 +1,308 @@
+/* ===== Grid Container ===== */
+.hierarchical-grid {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: #1a1a2e;
+  background: #f8f9fa;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* ===== Toolbar ===== */
+.grid-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: #fff;
+  border-bottom: 2px solid #0f3460;
+}
+
+.nav-btn {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+
+.nav-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.current-path {
+  font-size: 14px;
+}
+
+.level-badge {
+  margin-left: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+/* ===== Grid Layout ===== */
+.grid-container {
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.grid-frozen {
+  flex-shrink: 0;
+  z-index: 2;
+  background: #fff;
+  border-right: 2px solid #0f3460;
+  box-shadow: 4px 0 8px rgba(0, 0, 0, 0.06);
+}
+
+.grid-scrollable {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* ===== Header ===== */
+.grid-header-row {
+  display: flex;
+  background: linear-gradient(180deg, #e8eaf6 0%, #c5cae9 100%);
+  border-bottom: 2px solid #7986cb;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.grid-header-cell {
+  padding: 10px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #283593;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-right: 1px solid #b0bec5;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.grid-header-cell:last-child {
+  border-right: none;
+}
+
+/* ===== Body ===== */
+.grid-body-frozen,
+.grid-body-scrollable {
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+
+.grid-body-frozen {
+  overflow-y: hidden;
+}
+
+/* Sync scrolling: the scrollable body drives scroll, frozen follows */
+.grid-body-scrollable {
+  overflow-y: auto;
+}
+
+/* ===== Rows ===== */
+.grid-row {
+  display: flex;
+  border-bottom: 1px solid #e0e0e0;
+  transition: background 0.15s;
+}
+
+.grid-row:hover {
+  background: #e3f2fd;
+}
+
+.parent-row {
+  background: #e8eaf6;
+  font-weight: 600;
+}
+
+.parent-row:hover {
+  background: #d1d9ff;
+}
+
+.child-row {
+  background: #fff;
+}
+
+/* ===== Cells ===== */
+.grid-cell {
+  padding: 8px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-right: 1px solid #eeeeee;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  cursor: default;
+  min-height: 38px;
+}
+
+.grid-cell:last-child {
+  border-right: none;
+}
+
+.frozen-cell {
+  background: inherit;
+}
+
+.grid-cell:hover:not(.frozen-cell) {
+  background: rgba(25, 118, 210, 0.04);
+}
+
+/* ===== Cell Content ===== */
+.account-number {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: #37474f;
+}
+
+.drill-btn {
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 9px;
+  transition: background 0.2s, transform 0.15s;
+  flex-shrink: 0;
+}
+
+.drill-btn:hover {
+  background: #1565c0;
+  transform: scale(1.1);
+}
+
+.drill-spacer {
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.account-name {
+  font-size: 13px;
+  color: #1a1a2e;
+}
+
+.cell-value {
+  text-align: right;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-value.has-formula {
+  color: #1565c0;
+  font-style: italic;
+}
+
+.cell-value.cell-error {
+  color: #c62828;
+  font-weight: 600;
+}
+
+/* ===== Cell Input ===== */
+.cell-input {
+  width: 100%;
+  height: 100%;
+  border: 2px solid #1976d2;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  outline: none;
+  background: #e3f2fd;
+  box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.2);
+}
+
+.cell-input:focus {
+  border-color: #0d47a1;
+  background: #fff;
+}
+
+/* ===== Autocomplete ===== */
+.autocomplete-dropdown {
+  background: #fff;
+  border: 1px solid #b0bec5;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 1000;
+  min-width: 250px;
+  max-width: 400px;
+}
+
+.autocomplete-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #78909c;
+  background: #eceff1;
+  border-bottom: 1px solid #cfd8dc;
+  position: sticky;
+  top: 0;
+}
+
+.autocomplete-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 1px solid #f5f5f5;
+  transition: background 0.1s;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.selected {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.autocomplete-item:last-child {
+  border-bottom: none;
+}
+
+/* ===== Scrollbar Styling ===== */
+.grid-scrollable::-webkit-scrollbar,
+.grid-body-scrollable::-webkit-scrollbar,
+.autocomplete-dropdown::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.grid-scrollable::-webkit-scrollbar-track,
+.grid-body-scrollable::-webkit-scrollbar-track {
+  background: #f5f5f5;
+}
+
+.grid-scrollable::-webkit-scrollbar-thumb,
+.grid-body-scrollable::-webkit-scrollbar-thumb {
+  background: #b0bec5;
+  border-radius: 4px;
+}
+
+.grid-scrollable::-webkit-scrollbar-thumb:hover,
+.grid-body-scrollable::-webkit-scrollbar-thumb:hover {
+  background: #90a4ae;
+}
