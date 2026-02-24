@@ -563,6 +563,115 @@ export function parseCapAmount(
   };
 }
 
+/** A raw cell dependency: account number + data key */
+export interface CellDependency {
+  accountNumber: string;
+  dataKey: string;
+}
+
+/**
+ * Extract all cell dependencies from a formula string.
+ * Returns an array of {accountNumber, dataKey} pairs that the formula references.
+ * This walks the same reference patterns as resolveReferences but collects targets
+ * instead of evaluating them.
+ */
+export function extractCellDependencies(
+  formula: string,
+  context: ResolveContext
+): CellDependency[] {
+  const deps: CellDependency[] = [];
+  const seen = new Set<string>();
+
+  const addDep = (accountNumber: string, dataKey: string) => {
+    const key = `${accountNumber}|${dataKey}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deps.push({ accountNumber, dataKey });
+    }
+  };
+
+  const trimmed = formula.trim();
+
+  // Unwrap common function wrappers to get to inner references
+  let inner = trimmed;
+  const roundMatch = inner.match(/^ROUND\((.+),\s*\d+\)$/i);
+  if (roundMatch) inner = roundMatch[1].trim();
+
+  // SUM({ref},{ref},...) — each {dataKey} is a same-row reference
+  const sumMatch = inner.match(/^SUM\((.+)\)$/i);
+  if (sumMatch) {
+    const argsStr = sumMatch[1];
+    const refPattern = /\{([^}]+)\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = refPattern.exec(argsStr)) !== null) {
+      addDep(context.currentAccountNumber, m[1]);
+    }
+    return deps;
+  }
+
+  // SPREAD(expr) — the expression itself may contain refs
+  const spreadMatch = inner.match(/^SPREAD\((.+)\)$/i);
+  if (spreadMatch) {
+    inner = spreadMatch[1].trim();
+  }
+
+  // CapAmount(amountExpr, capExpr)
+  const capMatch = inner.match(/^CapAmount\((.+),\s*(.+)\)$/i);
+  if (capMatch) {
+    // Recurse into both arguments
+    const sub1 = extractCellDependencies(capMatch[1].trim(), context);
+    const sub2 = extractCellDependencies(capMatch[2].trim(), context);
+    for (const d of [...sub1, ...sub2]) addDep(d.accountNumber, d.dataKey);
+    return deps;
+  }
+
+  // Fully qualified [rowRef].{colRef}
+  const fullRefPattern = /\[([^\]]+)\]\.\{([^}]+)\}/g;
+  let match: RegExpExecArray | null;
+  // Clone inner to avoid mutating during iteration
+  let workStr = inner;
+  while ((match = fullRefPattern.exec(workStr)) !== null) {
+    const acct = resolveAccountRefPublic(match[1].trim(), context);
+    const dk = resolveColumnRefPublic(match[2].trim(), context);
+    if (acct && dk) addDep(acct, dk);
+  }
+  // Remove fully-qualified refs so partial patterns don't re-match
+  workStr = workStr.replace(/\[([^\]]+)\]\.\{([^}]+)\}/g, '0');
+
+  // [rowRef] alone — same column
+  const rowRefPattern = /\[([^\]]+)\]/g;
+  while ((match = rowRefPattern.exec(workStr)) !== null) {
+    const acct = resolveAccountRefPublic(match[1].trim(), context);
+    if (acct) addDep(acct, context.currentColumn);
+  }
+  workStr = workStr.replace(/\[([^\]]+)\]/g, '0');
+
+  // {colRef} alone — same row
+  const colRefPattern = /\{([^}]+)\}/g;
+  while ((match = colRefPattern.exec(workStr)) !== null) {
+    const dk = resolveColumnRefPublic(match[1].trim(), context);
+    if (dk) addDep(context.currentAccountNumber, dk);
+  }
+
+  return deps;
+}
+
+/** Public wrapper for resolveAccountRef */
+function resolveAccountRefPublic(
+  ref: string,
+  context: ResolveContext
+): string | null {
+  return resolveAccountRef(ref, context);
+}
+
+/** Public wrapper for resolveColumnRef */
+function resolveColumnRefPublic(
+  ref: string,
+  context: ResolveContext
+): string | null {
+  return resolveColumnRef(ref, context);
+}
+
 /**
  * Build LineTotalN variables for a given row.
  * LineTotal1 corresponds to the first columnDef's total, LineTotal2 to the second, etc.

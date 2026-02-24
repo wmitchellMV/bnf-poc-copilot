@@ -76,6 +76,19 @@ export interface BatchSaveResponse {
   success: boolean;
 }
 
+/** A node in a dependency tree */
+export interface DependencyTreeNode {
+  accountNumber: string;
+  accountName: string;
+  dataKey: string;
+  columnLabel: string;
+  formula: string | null;
+  numericValue: number | null;
+  /** Whether this is a leaf (static value / no further deps) */
+  isLeaf: boolean;
+  children: DependencyTreeNode[];
+}
+
 /** Represents a single cell change for the change log */
 export interface CellChange {
   accountNumber: string;

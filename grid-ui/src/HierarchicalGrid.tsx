@@ -7,6 +7,7 @@ import type {
   ColumnDef,
   ResolvedColumn,
   CellChange,
+  DependencyTreeNode,
 } from './types';
 import {
   evaluateFormula,
@@ -18,6 +19,7 @@ import {
   parseCapAmount,
   buildLineTotalVariables,
   extractUnresolvedVariables,
+  extractCellDependencies,
 } from './formulaEngine';
 import type { ResolveContext } from './formulaEngine';
 import { resolveApiVariable, batchSave } from './api';
@@ -79,6 +81,49 @@ const ACCT_NUM_WIDTH = 130;
 const ACCT_NAME_WIDTH = 220;
 const MIN_CELL_WIDTH = 60;
 
+/** Recursive component to render a dependency tree node */
+const DepTreeNode: React.FC<{ node: DependencyTreeNode; depth: number }> = ({ node, depth }) => {
+  const [collapsed, setCollapsed] = useState(false);
+  const hasChildren = node.children.length > 0;
+  const indent = depth * 20;
+
+  const valueDisplay = node.formula
+    ? node.formula
+    : node.numericValue !== null
+      ? formatNumber(node.numericValue)
+      : '—';
+
+  return (
+    <div className="dep-node">
+      <div
+        className={`dep-node-row ${node.isLeaf ? 'dep-leaf' : 'dep-branch'}`}
+        style={{ paddingLeft: indent + 8 }}
+        onClick={() => hasChildren && setCollapsed(!collapsed)}
+      >
+        <span className="dep-node-toggle">
+          {hasChildren ? (collapsed ? '▶' : '▼') : '●'}
+        </span>
+        <span className="dep-node-acct">{node.accountNumber}</span>
+        <span className="dep-node-col">{node.columnLabel}</span>
+        <span className={`dep-node-val ${node.isLeaf ? 'dep-val-static' : 'dep-val-formula'}`}>
+          {valueDisplay}
+        </span>
+      </div>
+      {hasChildren && !collapsed && (
+        <div className="dep-node-children">
+          {node.children.map((child, idx) => (
+            <DepTreeNode
+              key={`${child.accountNumber}-${child.dataKey}-${idx}`}
+              node={child}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
   parentRow,
   childRows,
@@ -104,6 +149,7 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
   const [showResetModal, setShowResetModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [changesCollapsed, setChangesCollapsed] = useState(false);
+  const [selectedCell, setSelectedCell] = useState<{ accountNumber: string; dataKey: string } | null>(null);
   const initialDataRef = useRef<Map<string, Map<string, CellData>>>(new Map());
   const resizingRef = useRef<{ dataKey: string; startX: number; startWidth: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -384,6 +430,187 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
     setLoadingCells(new Set());
     setShowResetModal(false);
   }, []);
+
+  // Build dependency tree for a given cell — recursively traces formula references
+  const buildDependencyTree = useCallback(
+    (
+      accountNumber: string,
+      dataKey: string,
+      visited: Set<string> = new Set()
+    ): DependencyTreeNode | null => {
+      const visitKey = `${accountNumber}|${dataKey}`;
+      if (visited.has(visitKey)) {
+        // Circular reference — stop recursion
+        const acct = allAccounts.find((a) => a.accountNumber === accountNumber);
+        const resolvedCol = resolvedColumns.find((c) => c.dataKey === dataKey);
+        return {
+          accountNumber,
+          accountName: acct?.accountName ?? accountNumber,
+          dataKey,
+          columnLabel: resolvedCol ? `${resolvedCol.groupName} › ${resolvedCol.label}` : dataKey,
+          formula: '(circular)',
+          numericValue: null,
+          isLeaf: true,
+          children: [],
+        };
+      }
+      visited.add(visitKey);
+
+      // Look up the cell data
+      const localRow = localData.get(accountNumber);
+      const cell = localRow?.get(dataKey);
+
+      // Also try allRows / allAccounts if not in localData
+      let cellData: CellData | undefined = cell;
+      if (!cellData) {
+        const row = allRows.find((r) => r.accountNumber === accountNumber);
+        if (row && row.data[dataKey]) cellData = row.data[dataKey];
+      }
+      if (!cellData) {
+        const acct = allAccounts.find((a) => a.accountNumber === accountNumber);
+        if (acct && acct.data[dataKey]) cellData = acct.data[dataKey];
+      }
+
+      const acctInfo = allAccounts.find((a) => a.accountNumber === accountNumber);
+      const acctName = acctInfo?.accountName ?? accountNumber;
+      const resolvedCol = resolvedColumns.find((c) => c.dataKey === dataKey);
+      const colLabel = resolvedCol ? `${resolvedCol.groupName} › ${resolvedCol.label}` : dataKey;
+
+      if (!cellData || !cellData.formula) {
+        // Static value — leaf node
+        return {
+          accountNumber,
+          accountName: acctName,
+          dataKey,
+          columnLabel: colLabel,
+          formula: null,
+          numericValue: cellData?.numericValue ?? null,
+          isLeaf: true,
+          children: [],
+        };
+      }
+
+      // Has a formula — extract dependencies
+      const formulaText = cellData.formula.startsWith('=')
+        ? cellData.formula.substring(1)
+        : cellData.formula;
+
+      const context = makeResolveContext(accountNumber, dataKey);
+      const deps = extractCellDependencies(formulaText, context);
+
+      const children: DependencyTreeNode[] = [];
+      for (const dep of deps) {
+        const childNode = buildDependencyTree(dep.accountNumber, dep.dataKey, new Set(visited));
+        if (childNode) children.push(childNode);
+      }
+
+      return {
+        accountNumber,
+        accountName: acctName,
+        dataKey,
+        columnLabel: colLabel,
+        formula: cellData.formula,
+        numericValue: cellData.numericValue,
+        isLeaf: false,
+        children,
+      };
+    },
+    [localData, allRows, allAccounts, resolvedColumns, makeResolveContext]
+  );
+
+  // Memoize the dependency tree for the currently selected cell
+  const dependencyTree: DependencyTreeNode | null = useMemo(() => {
+    if (!selectedCell) return null;
+    return buildDependencyTree(selectedCell.accountNumber, selectedCell.dataKey);
+  }, [selectedCell, buildDependencyTree]);
+
+  // Build a reverse dependency map: for each cell, which cells reference it?
+  const reverseDepsMap = useMemo(() => {
+    const map = new Map<string, { accountNumber: string; dataKey: string }[]>();
+    const allVisibleRows = [parentRow, ...childRows];
+    for (const row of allVisibleRows) {
+      const localRow = localData.get(row.accountNumber);
+      for (const resolvedCol of resolvedColumns) {
+        const dk = resolvedCol.dataKey;
+        const cell = localRow?.get(dk) ?? row.data[dk];
+        if (!cell?.formula) continue;
+        const formulaText = cell.formula.startsWith('=')
+          ? cell.formula.substring(1)
+          : cell.formula;
+        const ctx = makeResolveContext(row.accountNumber, dk);
+        const deps = extractCellDependencies(formulaText, ctx);
+        for (const dep of deps) {
+          const targetKey = `${dep.accountNumber}|${dep.dataKey}`;
+          if (!map.has(targetKey)) map.set(targetKey, []);
+          map.get(targetKey)!.push({ accountNumber: row.accountNumber, dataKey: dk });
+        }
+      }
+    }
+    return map;
+  }, [parentRow, childRows, localData, resolvedColumns, makeResolveContext]);
+
+  // Build the inverted dependency tree (dependents) for a given cell
+  const buildDependentsTree = useCallback(
+    (
+      accountNumber: string,
+      dataKey: string,
+      visited: Set<string> = new Set()
+    ): DependencyTreeNode | null => {
+      const visitKey = `${accountNumber}|${dataKey}`;
+      const acctInfo = allAccounts.find((a) => a.accountNumber === accountNumber);
+      const acctName = acctInfo?.accountName ?? accountNumber;
+      const resolvedCol = resolvedColumns.find((c) => c.dataKey === dataKey);
+      const colLabel = resolvedCol ? `${resolvedCol.groupName} › ${resolvedCol.label}` : dataKey;
+
+      if (visited.has(visitKey)) {
+        return {
+          accountNumber,
+          accountName: acctName,
+          dataKey,
+          columnLabel: colLabel,
+          formula: '(circular)',
+          numericValue: null,
+          isLeaf: true,
+          children: [],
+        };
+      }
+      visited.add(visitKey);
+
+      // Look up cell data
+      const localRow = localData.get(accountNumber);
+      let cellData: CellData | undefined = localRow?.get(dataKey);
+      if (!cellData) {
+        const row = allRows.find((r) => r.accountNumber === accountNumber);
+        if (row && row.data[dataKey]) cellData = row.data[dataKey];
+      }
+
+      // Get dependents from the reverse map
+      const dependents = reverseDepsMap.get(visitKey) ?? [];
+      const children: DependencyTreeNode[] = [];
+      for (const dep of dependents) {
+        const childNode = buildDependentsTree(dep.accountNumber, dep.dataKey, new Set(visited));
+        if (childNode) children.push(childNode);
+      }
+
+      return {
+        accountNumber,
+        accountName: acctName,
+        dataKey,
+        columnLabel: colLabel,
+        formula: cellData?.formula ?? null,
+        numericValue: cellData?.numericValue ?? null,
+        isLeaf: children.length === 0,
+        children,
+      };
+    },
+    [localData, allRows, allAccounts, resolvedColumns, reverseDepsMap]
+  );
+
+  // Memoize the dependents tree for the currently selected cell
+  const dependentsTree: DependencyTreeNode | null = useMemo(() => {
+    if (!selectedCell) return null;
+    return buildDependentsTree(selectedCell.accountNumber, selectedCell.dataKey);
+  }, [selectedCell, buildDependentsTree]);
 
   // Handle starting edit — only allow on leaf accounts (no children)
   const startEditing = (accountNumber: string, dataKey: string) => {
@@ -1146,8 +1373,16 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
                   group.columns.map((col) => (
                     <div
                       key={col.dataKey}
-                      className={`grid-cell ${col.isTotal ? 'totals-cell' : ''}`}
+                      className={`grid-cell ${col.isTotal ? 'totals-cell' : ''}${
+                        selectedCell?.accountNumber === row.accountNumber &&
+                        selectedCell?.dataKey === col.dataKey
+                          ? ' selected-cell'
+                          : ''
+                      }`}
                       style={{ width: getColWidth(col.dataKey) }}
+                      onClick={() =>
+                        setSelectedCell({ accountNumber: row.accountNumber, dataKey: col.dataKey })
+                      }
                       onDoubleClick={() =>
                         startEditing(row.accountNumber, col.dataKey)
                       }
@@ -1202,51 +1437,100 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
         </div>
       )}
 
-      {/* Changes Panel */}
-      {changes.length > 0 && (
-        <div className="changes-panel">
-          <div className="changes-header" onClick={() => setChangesCollapsed(!changesCollapsed)}>
-            <span className="changes-toggle">{changesCollapsed ? '▶' : '▼'}</span>
-            <h3 className="changes-title">
-              Pending Changes ({changes.length})
-            </h3>
-          </div>
-          {!changesCollapsed && (
-            <div className="changes-table-wrap">
-              <table className="changes-table">
-                <thead>
-                  <tr>
-                    <th>Account #</th>
-                    <th>Account Name</th>
-                    <th>Column</th>
-                    <th>Old Value</th>
-                    <th>New Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {changes.map((c, idx) => (
-                    <tr key={`${c.accountNumber}-${c.dataKey}-${idx}`}>
-                      <td className="change-acct">{c.accountNumber}</td>
-                      <td className="change-name" title={c.accountName}>{c.accountName}</td>
-                      <td className="change-col">{c.columnLabel}</td>
-                      <td className="change-old">
-                        {c.oldFormula
-                          ? c.oldFormula
-                          : c.oldValue !== null
-                            ? formatNumber(c.oldValue)
-                            : '—'}
-                      </td>
-                      <td className="change-new">
-                        {c.newFormula
-                          ? c.newFormula
-                          : c.newValue !== null
-                            ? formatNumber(c.newValue)
-                            : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {/* Bottom Panels: Changes + Dependency Trees side by side */}
+      {(changes.length > 0 || dependencyTree || dependentsTree) && (
+        <div className="bottom-panels">
+          {/* Changes Panel */}
+          {changes.length > 0 && (
+            <div className="changes-panel">
+              <div className="changes-header" onClick={() => setChangesCollapsed(!changesCollapsed)}>
+                <span className="changes-toggle">{changesCollapsed ? '▶' : '▼'}</span>
+                <h3 className="changes-title">
+                  Pending Changes ({changes.length})
+                </h3>
+              </div>
+              {!changesCollapsed && (
+                <div className="changes-table-wrap">
+                  <table className="changes-table">
+                    <thead>
+                      <tr>
+                        <th>Account #</th>
+                        <th>Account Name</th>
+                        <th>Column</th>
+                        <th>Old Value</th>
+                        <th>New Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {changes.map((c, idx) => (
+                        <tr key={`${c.accountNumber}-${c.dataKey}-${idx}`}>
+                          <td className="change-acct">{c.accountNumber}</td>
+                          <td className="change-name" title={c.accountName}>{c.accountName}</td>
+                          <td className="change-col">{c.columnLabel}</td>
+                          <td className="change-old">
+                            {c.oldFormula
+                              ? c.oldFormula
+                              : c.oldValue !== null
+                                ? formatNumber(c.oldValue)
+                                : '—'}
+                          </td>
+                          <td className="change-new">
+                            {c.newFormula
+                              ? c.newFormula
+                              : c.newValue !== null
+                                ? formatNumber(c.newValue)
+                                : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Dependency Tree Panel — "Depends On" */}
+          {dependencyTree && (
+            <div className="dep-tree-panel">
+              <div className="dep-tree-header">
+                <h3 className="dep-tree-title">
+                  ⬇ Depends On
+                </h3>
+                <span className="dep-tree-cell-label">
+                  {dependencyTree.accountNumber} › {dependencyTree.columnLabel}
+                </span>
+              </div>
+              <div className="dep-tree-content">
+                <DepTreeNode node={dependencyTree} depth={0} />
+              </div>
+            </div>
+          )}
+
+          {/* Dependents Tree Panel — "Used By" */}
+          {dependentsTree && (
+            <div className="dep-tree-panel dep-tree-dependents">
+              <div className="dep-tree-header dep-tree-header-dependents">
+                <h3 className="dep-tree-title">
+                  ⬆ Used By
+                </h3>
+                <span className="dep-tree-cell-label">
+                  {dependentsTree.accountNumber} › {dependentsTree.columnLabel}
+                </span>
+              </div>
+              <div className="dep-tree-content">
+                {dependentsTree.children.length > 0 ? (
+                  dependentsTree.children.map((child, idx) => (
+                    <DepTreeNode
+                      key={`${child.accountNumber}-${child.dataKey}-${idx}`}
+                      node={child}
+                      depth={0}
+                    />
+                  ))
+                ) : (
+                  <div className="dep-tree-empty">No cells depend on this cell</div>
+                )}
+              </div>
             </div>
           )}
         </div>
