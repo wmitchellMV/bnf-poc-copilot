@@ -10,6 +10,8 @@ import type {
   AccountTreeNode,
   AccountSummary,
   GridViewResponse,
+  PeriodDef,
+  ColumnDef,
 } from './types';
 import { isFormula } from './formulaEngine';
 import './App.css';
@@ -21,9 +23,14 @@ function App() {
   const [allAccounts, setAllAccounts] = useState<AccountSummary[]>([]);
   const [allRows, setAllRows] = useState<AccountTreeNode[]>([]);
   const [navigationStack, setNavigationStack] = useState<string[]>([]);
+  const [periods, setPeriods] = useState<PeriodDef[]>([]);
+  const [columnDefs, setColumnDefs] = useState<ColumnDef[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AccountSummary[]>([]);
   const [showSearch, setShowSearch] = useState(false);
+  const [variables, setVariables] = useState<Map<string, number>>(new Map());
+  const [newVarLabel, setNewVarLabel] = useState('');
+  const [newVarValue, setNewVarValue] = useState('');
 
   // Load initial data
   useEffect(() => {
@@ -40,6 +47,8 @@ function App() {
         if (roots.length > 0) {
           const view = await getAccountView(roots[0].accountNumber);
           setGridView(view);
+          setPeriods(view.periods);
+          setColumnDefs(view.columns);
           setNavigationStack([roots[0].accountNumber]);
         }
       } catch (err) {
@@ -125,6 +134,27 @@ function App() {
       .slice(0, 20);
     setSearchResults(results);
   }, [searchQuery, allAccounts]);
+
+  const addVariable = () => {
+    const label = newVarLabel.trim();
+    const num = parseFloat(newVarValue);
+    if (!label || isNaN(num)) return;
+    setVariables((prev) => {
+      const next = new Map(prev);
+      next.set(label, num);
+      return next;
+    });
+    setNewVarLabel('');
+    setNewVarValue('');
+  };
+
+  const removeVariable = (label: string) => {
+    setVariables((prev) => {
+      const next = new Map(prev);
+      next.delete(label);
+      return next;
+    });
+  };
 
   if (error) {
     return (
@@ -213,6 +243,48 @@ function App() {
         </div>
       )}
 
+      {/* Variables Panel */}
+      <div className="variables-panel">
+        <h3 className="variables-title">Variables</h3>
+        <div className="variables-input-row">
+          <input
+            className="var-input var-label-input"
+            placeholder="Label (e.g. Budget.GLActuals1YearAgo)"
+            value={newVarLabel}
+            onChange={(e) => setNewVarLabel(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addVariable()}
+          />
+          <input
+            className="var-input var-value-input"
+            placeholder="Value"
+            type="number"
+            value={newVarValue}
+            onChange={(e) => setNewVarValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addVariable()}
+          />
+          <button className="var-add-btn" onClick={addVariable}>
+            + Add
+          </button>
+        </div>
+        {variables.size > 0 && (
+          <div className="variables-list">
+            {[...variables.entries()].map(([label, val]) => (
+              <div key={label} className="variable-chip">
+                <span className="var-chip-label">{label}</span>
+                <span className="var-chip-value">{val.toLocaleString()}</span>
+                <button
+                  className="var-remove-btn"
+                  onClick={() => removeVariable(label)}
+                  title="Remove variable"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {loading && !gridView ? (
         <div className="loading">
           <div className="spinner"></div>
@@ -222,13 +294,15 @@ function App() {
         <HierarchicalGrid
           parentRow={gridView.parent}
           childRows={gridView.children}
-          dataColumns={gridView.columns}
+          periods={periods}
+          columnDefs={columnDefs}
           frozenColumnCount={2}
           allAccounts={allAccounts}
           onDrillDown={handleDrillDown}
           onDrillUp={handleDrillUp}
           onCellUpdate={handleCellUpdate}
           allRows={allRows}
+          variables={variables}
         />
       ) : (
         <div className="empty-state">No data available</div>
@@ -260,8 +334,20 @@ function App() {
               <span>Add values from two rows</span>
             </div>
             <div className="help-item">
+              <code>=SUM({'{2101:col1}'},{'{2102:col1}'},...)</code>
+              <span>Sum explicit cell references (Totals default)</span>
+            </div>
+            <div className="help-item">
+              <code>=SPREAD(12000)</code>
+              <span>Distribute 12000 evenly across all periods (Totals only)</span>
+            </div>
+            <div className="help-item">
               <code>= ([A1001].{'{2024 Budget}'} + 500) * 1.05</code>
               <span>Complex formula with math</span>
+            </div>
+            <div className="help-item">
+              <code>=Budget.GLActuals1YearAgo</code>
+              <span>Reference a user-defined variable by name</span>
             </div>
           </div>
           <p className="help-tip">
@@ -269,6 +355,12 @@ function App() {
             account autocomplete or <strong>{'{'}</strong> for column
             autocomplete. Press Enter to confirm, Escape to cancel, Tab to move
             to next column.
+          </p>
+          <p className="help-tip">
+            Columns are grouped by <strong>Period</strong> with a
+            <strong> Totals</strong> group on the right. Totals default to
+            <code>=SUM({'{...}'})</code>. Use <code>=SPREAD(amount)</code> in a Totals
+            cell to distribute evenly across periods.
           </p>
         </div>
       </footer>

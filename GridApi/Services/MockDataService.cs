@@ -4,9 +4,30 @@ namespace GridApi.Services;
 
 public class MockDataService
 {
-    private static readonly string[] Columns = 
-    { 
-        "2024 Budget", "2024 Actual", "2025 Budget", "2025 Actual", "2026 Budget", "2026 Projected" 
+    private static readonly List<PeriodDef> Periods = new()
+    {
+        new() { Id = "2101", Name = "January 2021" },
+        new() { Id = "2102", Name = "February 2021" },
+        new() { Id = "2103", Name = "March 2021" },
+        new() { Id = "2104", Name = "April 2021" },
+        new() { Id = "2105", Name = "May 2021" },
+        new() { Id = "2106", Name = "June 2021" },
+        new() { Id = "2107", Name = "July 2021" },
+        new() { Id = "2108", Name = "August 2021" },
+        new() { Id = "2109", Name = "September 2021" },
+        new() { Id = "2110", Name = "October 2021" },
+        new() { Id = "2111", Name = "November 2021" },
+        new() { Id = "2112", Name = "December 2021" }
+    };
+
+    private static readonly List<ColumnDef> ColumnDefs = new()
+    {
+        new() { Id = "col1", Name = "2024 Budget" },
+        new() { Id = "col2", Name = "2024 Actual" },
+        new() { Id = "col3", Name = "2025 Budget" },
+        new() { Id = "col4", Name = "2025 Actual" },
+        new() { Id = "col5", Name = "2026 Budget" },
+        new() { Id = "col6", Name = "2026 Projected" }
     };
 
     private static readonly Random Rng = new(42);
@@ -37,7 +58,11 @@ public class MockDataService
         GenerateMockData();
     }
 
-    public IReadOnlyList<string> GetColumns() => Columns;
+    public GridConfigResponse GetConfig() => new()
+    {
+        Periods = Periods,
+        Columns = ColumnDefs
+    };
 
     public IReadOnlyDictionary<string, Account> GetAllAccounts() => _accounts;
 
@@ -55,7 +80,8 @@ public class MockDataService
         {
             Parent = ToTreeNode(account),
             Children = children,
-            Columns = Columns.ToList()
+            Periods = Periods,
+            Columns = ColumnDefs
         };
     }
 
@@ -235,12 +261,29 @@ public class MockDataService
     private Dictionary<string, CellData> GenerateRowData()
     {
         var data = new Dictionary<string, CellData>();
-        foreach (var col in Columns)
+        // Generate data for each period × column combination
+        foreach (var period in Periods)
         {
-            var baseValue = Rng.Next(10000, 5000000) / 100.0;
-            data[col] = new CellData
+            foreach (var col in ColumnDefs)
             {
-                NumericValue = Math.Round(baseValue, 2)
+                var key = $"{period.Id}:{col.Id}";
+                var baseValue = Rng.Next(1000, 500000) / 100.0;
+                data[key] = new CellData
+                {
+                    NumericValue = Math.Round(baseValue, 2)
+                };
+            }
+        }
+        // Generate totals (sum across periods for each column)
+        foreach (var col in ColumnDefs)
+        {
+            var totalKey = $"total:{col.Id}";
+            var sum = Periods.Sum(p => data[$"{p.Id}:{col.Id}"].NumericValue ?? 0);
+            var refs = string.Join(",", Periods.Select(p => $"{{{p.Id}:{col.Id}}}"));
+            data[totalKey] = new CellData
+            {
+                NumericValue = Math.Round(sum, 2),
+                Formula = $"=SUM({refs})"
             };
         }
         return data;

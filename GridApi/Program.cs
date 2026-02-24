@@ -19,8 +19,8 @@ app.UseCors();
 
 var dataService = MockDataService.Instance;
 
-// Get all column definitions
-app.MapGet("/api/columns", () => dataService.GetColumns());
+// Get grid configuration (periods + column definitions)
+app.MapGet("/api/config", () => dataService.GetConfig());
 
 // Get root-level accounts
 app.MapGet("/api/accounts/roots", () => dataService.GetRootAccounts());
@@ -61,6 +61,46 @@ app.MapGet("/api/accounts/{accountNumber}/cell/{column}", (string accountNumber,
 {
     var value = dataService.ResolveCellValue(accountNumber, column);
     return value.HasValue ? Results.Ok(new { value = value.Value }) : Results.NotFound();
+});
+
+// Resolve an API-calculated variable
+app.MapPost("/api/variables/resolve", async (VariableResolveRequest request) =>
+{
+    // Check if this variable is known
+    var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "GLActuals.1YearAgo" };
+    if (!known.Contains(request.VariableName))
+    {
+        return Results.NotFound(new { error = $"Unknown variable: {request.VariableName}" });
+    }
+
+    // Simulate a slow calculation
+    await Task.Delay(2000);
+
+    // Return a deterministic-ish demo value between 10000-15000
+    var hash = HashCode.Combine(request.VariableName, request.AccountNumber, request.PeriodId, request.ColumnId);
+    var rng = new Random(hash);
+    var value = Math.Round(10000 + rng.NextDouble() * 5000, 2);
+
+    return Results.Ok(new { value });
+});
+
+// Batch save cell changes
+app.MapPost("/api/accounts/batch-save", (BatchSaveRequest request) =>
+{
+    var saved = 0;
+    foreach (var change in request.Changes)
+    {
+        var cellRequest = new CellUpdateRequest
+        {
+            AccountNumber = change.AccountNumber,
+            Column = change.Column,
+            Formula = change.Formula,
+            NumericValue = change.NumericValue
+        };
+        if (dataService.UpdateCell(cellRequest))
+            saved++;
+    }
+    return Results.Ok(new BatchSaveResponse { SavedCount = saved, Success = true });
 });
 
 app.Run();

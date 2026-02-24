@@ -16,7 +16,6 @@ body {
 
 /* ===== App Container ===== */
 .app-container {
-  max-width: 1600px;
   margin: 0 auto;
   padding: 20px;
 }
@@ -218,6 +217,112 @@ body {
   background: #fff;
   border-radius: 8px;
   border: 1px solid #e0e0e0;
+}
+
+/* ===== Variables Panel ===== */
+.variables-panel {
+  margin-bottom: 16px;
+  padding: 14px 18px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.variables-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin-bottom: 10px;
+}
+
+.variables-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.var-input {
+  padding: 7px 10px;
+  border: 1px solid #b0bec5;
+  border-radius: 5px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.var-input:focus {
+  border-color: #1976d2;
+  box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.12);
+}
+
+.var-label-input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.var-value-input {
+  width: 140px;
+}
+
+.var-add-btn {
+  background: #1976d2;
+  color: #fff;
+  border: none;
+  padding: 7px 16px;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.var-add-btn:hover {
+  background: #1565c0;
+}
+
+.variables-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.variable-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #e3f2fd;
+  border: 1px solid #90caf9;
+  border-radius: 20px;
+  padding: 4px 10px 4px 14px;
+  font-size: 13px;
+}
+
+.var-chip-label {
+  font-family: 'Consolas', monospace;
+  font-weight: 600;
+  color: #1565c0;
+}
+
+.var-chip-value {
+  color: #37474f;
+}
+
+.var-remove-btn {
+  background: none;
+  border: none;
+  color: #b71c1c;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+
+.var-remove-btn:hover {
+  background: rgba(183, 28, 28, 0.1);
 }
 
 .help-section h3 {
