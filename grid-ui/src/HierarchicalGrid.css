@@ -517,6 +517,47 @@
   background: #e3f2fd !important;
 }
 
+/* ===== Circular Reference Error Banner ===== */
+.circular-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #fff3e0;
+  border: 1px solid #ff9800;
+  border-radius: 4px;
+  margin: 0;
+  animation: fadeIn 0.2s ease;
+}
+
+.circular-error-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.circular-error-text {
+  flex: 1;
+  font-size: 13px;
+  color: #e65100;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.circular-error-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: #bf360c;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.circular-error-close:hover {
+  color: #d84315;
+}
+
 /* ===== Bottom Panels Container ===== */
 .bottom-panels {
   display: flex;

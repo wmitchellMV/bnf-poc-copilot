@@ -20,6 +20,7 @@ import {
   buildLineTotalVariables,
   extractUnresolvedVariables,
   extractCellDependencies,
+  detectCircularDependency,
 } from './formulaEngine';
 import type { ResolveContext } from './formulaEngine';
 import { resolveApiVariable, batchSave } from './api';
@@ -150,6 +151,7 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
   const [saving, setSaving] = useState(false);
   const [changesCollapsed, setChangesCollapsed] = useState(false);
   const [selectedCell, setSelectedCell] = useState<{ accountNumber: string; dataKey: string } | null>(null);
+  const [circularError, setCircularError] = useState<string | null>(null);
   const initialDataRef = useRef<Map<string, Map<string, CellData>>>(new Map());
   const resizingRef = useRef<{ dataKey: string; startX: number; startWidth: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -621,6 +623,9 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
     // Prevent editing on accounts that have children (summary rows)
     if (row.hasChildren) return;
 
+    // Clear any previous circular error when starting a new edit
+    setCircularError(null);
+
     const localRow = localData.get(accountNumber);
     const cell = localRow?.get(dataKey) ?? row.data[dataKey];
     const rawValue = cell?.formula
@@ -808,6 +813,34 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
     if (isFormula(value)) {
       const formulaText = value.startsWith('=') ? value.substring(1) : value;
 
+      // --- Circular reference check ---
+      const context0 = makeResolveContext(accountNumber, column);
+      const getCellFormula = (acct: string, dk: string): string | null => {
+        const lr = localData.get(acct);
+        const c = lr?.get(dk);
+        if (c?.formula) return c.formula;
+        const r = allRows.find((row) => row.accountNumber === acct);
+        if (r?.data[dk]?.formula) return r.data[dk].formula;
+        const a = allAccounts.find((acc) => acc.accountNumber === acct);
+        if (a?.data[dk]?.formula) return a.data[dk].formula;
+        return null;
+      };
+      const circularPath = detectCircularDependency(
+        accountNumber, column, formulaText, context0, getCellFormula
+      );
+      if (circularPath) {
+        const pathLabels = circularPath.map((key) => {
+          const [acct, dk] = key.split('|');
+          const rc = resolvedColumns.find((c) => c.dataKey === dk);
+          const colLbl = rc ? `${rc.groupName} › ${rc.label}` : dk;
+          return `${acct} [${colLbl}]`;
+        });
+        setCircularError(`Circular reference detected: ${pathLabels.join(' → ')}`);
+        // Don't commit — leave the cell in edit mode
+        return;
+      }
+      setCircularError(null);
+
       // Check for SPREAD formula in total columns
       if (isTotalCol && resolvedCol) {
         const context = makeResolveContext(accountNumber, column);
@@ -980,6 +1013,7 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
   const cancelEdit = () => {
     setEditingCell(null);
     setAutocomplete(null);
+    setCircularError(null);
   };
 
   const updateLocalCell = (
@@ -1251,6 +1285,15 @@ export const HierarchicalGrid: React.FC<HierarchicalGridProps> = ({
           )}
         </div>
       </div>
+
+      {/* Circular Reference Error Banner */}
+      {circularError && (
+        <div className="circular-error-banner">
+          <span className="circular-error-icon">⚠</span>
+          <span className="circular-error-text">{circularError}</span>
+          <button className="circular-error-close" onClick={() => setCircularError(null)}>×</button>
+        </div>
+      )}
 
       {/* Grid Container */}
       <div className="grid-container">

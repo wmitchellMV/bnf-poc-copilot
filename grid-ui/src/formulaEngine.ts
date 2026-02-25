@@ -13,6 +13,7 @@ import type { AccountTreeNode, AccountSummary, PeriodDef, ResolvedColumn, Column
  *   = SUM({2101:col1},{2102:col1},{2103:col1})  (sum explicit cell references)
  *   = ROUND(expression, decimals)  (round result to N decimal places)
  *   = CapAmount(amountPerPeriod, capTotal)  (fill periods forward until cap is reached)
+ *   = IF(condition, then_value, else_value)  (conditional: supports >, <, >=, <=, ==, !=)
  *
  * Cell references:
  *   [accountNumberOrName]  - references a row
@@ -69,6 +70,12 @@ export function evaluateFormulaWithError(
     const plain = parseFloat(trimmed);
     if (!isNaN(plain) && trimmed === String(plain)) {
       return { value: plain, error: null };
+    }
+
+    // Check for IF(condition, then, else)
+    const ifParsed = parseIfFunction(trimmed);
+    if (ifParsed) {
+      return evaluateIf(ifParsed.condition, ifParsed.thenExpr, ifParsed.elseExpr, context);
     }
 
     // Check for ROUND(expression, decimals)
@@ -254,7 +261,7 @@ export function extractUnresolvedVariables(
 
   // Strip known function prefixes so their inner args get checked
   let inner = trimmed;
-  const funcPrefixes = [/^SPREAD\(/i, /^SUM\(/i, /^ROUND\(/i, /^CapAmount\(/i];
+  const funcPrefixes = [/^SPREAD\(/i, /^SUM\(/i, /^ROUND\(/i, /^CapAmount\(/i, /^IF\(/i];
   for (const fp of funcPrefixes) {
     if (fp.test(inner)) {
       inner = inner.replace(fp, '').replace(/\)$/, '');
@@ -282,10 +289,13 @@ export function extractUnresolvedVariables(
   const tokenPattern = /[A-Za-z_][A-Za-z0-9_.]*(?:\.[A-Za-z0-9_]+)*/g;
   const tokens: string[] = [];
   let match: RegExpExecArray | null;
+  // Known function/keyword names to skip
+  const knownKeywords = new Set(['IF', 'SUM', 'SPREAD', 'ROUND', 'CapAmount', 'if', 'sum', 'spread', 'round', 'capamount']);
   while ((match = tokenPattern.exec(resolved)) !== null) {
     const token = match[0];
-    // Skip pure numbers or known math tokens
+    // Skip pure numbers, known math tokens, or known function keywords
     if (/^\d+$/.test(token)) continue;
+    if (knownKeywords.has(token)) continue;
     if (!tokens.includes(token)) {
       tokens.push(token);
     }
@@ -597,6 +607,16 @@ export function extractCellDependencies(
   const roundMatch = inner.match(/^ROUND\((.+),\s*\d+\)$/i);
   if (roundMatch) inner = roundMatch[1].trim();
 
+  // IF(condition, then, else) — recurse into all three arguments
+  const ifParsed = parseIfFunction(inner);
+  if (ifParsed) {
+    const sub1 = extractCellDependencies(ifParsed.condition, context);
+    const sub2 = extractCellDependencies(ifParsed.thenExpr, context);
+    const sub3 = extractCellDependencies(ifParsed.elseExpr, context);
+    for (const d of [...sub1, ...sub2, ...sub3]) addDep(d.accountNumber, d.dataKey);
+    return deps;
+  }
+
   // SUM({ref},{ref},...) — each {dataKey} is a same-row reference
   const sumMatch = inner.match(/^SUM\((.+)\)$/i);
   if (sumMatch) {
@@ -654,6 +674,158 @@ export function extractCellDependencies(
   }
 
   return deps;
+}
+
+/**
+ * Parse an IF(condition, then_expr, else_expr) function call.
+ * Uses bracket/paren-aware splitting to handle nested functions in arguments.
+ * Returns null if the formula is not an IF function.
+ */
+function parseIfFunction(
+  formula: string
+): { condition: string; thenExpr: string; elseExpr: string } | null {
+  const trimmed = formula.trim();
+  const ifMatch = trimmed.match(/^IF\(/i);
+  if (!ifMatch) return null;
+  // Must end with )
+  if (!trimmed.endsWith(')')) return null;
+
+  // Extract the inner content between IF( and the final )
+  const inner = trimmed.substring(3, trimmed.length - 1);
+
+  // Split by commas at depth 0 (respecting nested parens, brackets, braces)
+  const args: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of inner) {
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++;
+      current += ch;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--;
+      current += ch;
+    } else if (ch === ',' && depth === 0) {
+      args.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  args.push(current.trim());
+
+  if (args.length !== 3) return null;
+  return { condition: args[0], thenExpr: args[1], elseExpr: args[2] };
+}
+
+/**
+ * Evaluate a condition string that may contain comparison operators.
+ * Supports: >, <, >=, <=, ==, !=
+ * Both sides are evaluated as numeric expressions.
+ * Returns true/false, or null if the condition cannot be evaluated.
+ */
+function evaluateCondition(
+  condition: string,
+  context: ResolveContext
+): boolean | null {
+  // Try to find a comparison operator (order matters: >= before >, etc.)
+  const ops = ['>=', '<=', '!=', '==', '>', '<'] as const;
+  for (const op of ops) {
+    const idx = condition.indexOf(op);
+    if (idx !== -1) {
+      const left = condition.substring(0, idx).trim();
+      const right = condition.substring(idx + op.length).trim();
+      const leftResult = evaluateFormulaWithError(left, context);
+      const rightResult = evaluateFormulaWithError(right, context);
+      if (leftResult.value === null || rightResult.value === null) return null;
+      switch (op) {
+        case '>': return leftResult.value > rightResult.value;
+        case '<': return leftResult.value < rightResult.value;
+        case '>=': return leftResult.value >= rightResult.value;
+        case '<=': return leftResult.value <= rightResult.value;
+        case '==': return leftResult.value === rightResult.value;
+        case '!=': return leftResult.value !== rightResult.value;
+      }
+    }
+  }
+  // No comparison operator found — evaluate as a truthy numeric check (non-zero = true)
+  const result = evaluateFormulaWithError(condition, context);
+  if (result.value === null) return null;
+  return result.value !== 0;
+}
+
+/**
+ * Evaluate an IF(condition, then_expr, else_expr) formula.
+ */
+function evaluateIf(
+  condition: string,
+  thenExpr: string,
+  elseExpr: string,
+  context: ResolveContext
+): { value: number | null; error: string | null } {
+  const condResult = evaluateCondition(condition, context);
+  if (condResult === null) {
+    return { value: null, error: `IF: cannot evaluate condition "${condition}"` };
+  }
+  const branch = condResult ? thenExpr : elseExpr;
+  return evaluateFormulaWithError(branch, context);
+}
+
+/**
+ * Detect whether adding a formula to a cell would create a circular dependency.
+ * Returns the circular path as an array of cell keys if circular, or null if safe.
+ */
+export function detectCircularDependency(
+  targetAccountNumber: string,
+  targetDataKey: string,
+  formulaText: string,
+  context: ResolveContext,
+  getCellFormula: (accountNumber: string, dataKey: string) => string | null
+): string[] | null {
+  const targetKey = `${targetAccountNumber}|${targetDataKey}`;
+
+  // Extract direct dependencies of the new formula
+  const directDeps = extractCellDependencies(formulaText, context);
+  if (directDeps.length === 0) return null;
+
+  // BFS/DFS: walk each dependency's own dependencies and check if any path leads back to target
+  const visited = new Set<string>();
+  const queue: { key: string; path: string[] }[] = directDeps.map((d) => ({
+    key: `${d.accountNumber}|${d.dataKey}`,
+    path: [targetKey, `${d.accountNumber}|${d.dataKey}`],
+  }));
+
+  while (queue.length > 0) {
+    const { key, path } = queue.shift()!;
+
+    if (key === targetKey) {
+      // Found a cycle — return the path
+      return path;
+    }
+
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    // Get the formula of this dependency cell
+    const [acctNum, dataKey] = key.split('|');
+    const formula = getCellFormula(acctNum, dataKey);
+    if (!formula) continue; // Static value — no further deps
+
+    const fText = formula.startsWith('=') ? formula.substring(1) : formula;
+    const depContext: ResolveContext = {
+      ...context,
+      currentAccountNumber: acctNum,
+      currentColumn: dataKey,
+    };
+    const subDeps = extractCellDependencies(fText, depContext);
+    for (const sd of subDeps) {
+      const sdKey = `${sd.accountNumber}|${sd.dataKey}`;
+      if (!visited.has(sdKey)) {
+        queue.push({ key: sdKey, path: [...path, sdKey] });
+      }
+    }
+  }
+
+  return null; // No cycle found
 }
 
 /** Public wrapper for resolveAccountRef */
